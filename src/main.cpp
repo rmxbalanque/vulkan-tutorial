@@ -36,10 +36,10 @@ private:
 
 	void initWindow()
 	{
-		glfwInit();                                        // Init GLFW lib
+		glfwInit();                                      // Init GLFW lib
 
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);    // We are not using OpenGL
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);        // No window resize (for now)
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);      // No window resize (for now)
 
 		// Create window
 		window = glfwCreateWindow(wWidth, wHeight, "Vulkan", nullptr, nullptr);
@@ -58,10 +58,10 @@ private:
 
 	void cleanup()
 	{
-		vkDestroyInstance(instance, nullptr);    // Destroy VK Instance
+		vkDestroyInstance(instance, nullptr);	// Destroy VK Instance
 
-		glfwDestroyWindow(window);                        // Destroy native window
-		glfwTerminate();                                // Deinit GLFW library
+		glfwDestroyWindow(window);				// Destroy native window
+		glfwTerminate();						// De-init GLFW library
 	}
 
 	// ------------------------------------------------------------------------
