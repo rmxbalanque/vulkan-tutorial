@@ -1,5 +1,6 @@
 
 #define GLFW_INCLUDE_VULKAN
+
 #include <GLFW/glfw3.h>
 
 #define GLM_FORCE_RADIANS
@@ -35,9 +36,10 @@ private:
 
 	void initWindow()
 	{
-		glfwInit();										// Init GLFW lib
-		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);	// We are not using OpenGL
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);		// No window resize (for now)
+		glfwInit();                                        // Init GLFW lib
+
+		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);    // We are not using OpenGL
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);        // No window resize (for now)
 
 		// Create window
 		window = glfwCreateWindow(wWidth, wHeight, "Vulkan", nullptr, nullptr);
@@ -48,16 +50,18 @@ private:
 
 	void mainLoop()
 	{
-		while (!glfwWindowShouldClose(window)) {
+		while (!glfwWindowShouldClose(window))
+		{
 			glfwPollEvents();
 		}
 	}
 
 	void cleanup()
 	{
-		vkDestroyInstance(instance, nullptr);	// Destroy VK Instance
-		glfwDestroyWindow(window);						// Destroy native window
-		glfwTerminate();								// Deinit GLFW library
+		vkDestroyInstance(instance, nullptr);    // Destroy VK Instance
+
+		glfwDestroyWindow(window);                        // Destroy native window
+		glfwTerminate();                                // Deinit GLFW library
 	}
 
 	// ------------------------------------------------------------------------
@@ -74,7 +78,7 @@ private:
 	void createInstance()
 	{
 		// Setup application info
-		VkApplicationInfo appInfo;
+		VkApplicationInfo appInfo{};
 		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 		appInfo.pApplicationName = "Hello Triangle";
 		appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -88,7 +92,7 @@ private:
 		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
 		// Setup creation info
-		VkInstanceCreateInfo createInfo;
+		VkInstanceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 		createInfo.pApplicationInfo = &appInfo;
 		createInfo.enabledExtensionCount = glfwExtensionCount;
@@ -96,23 +100,50 @@ private:
 		createInfo.enabledLayerCount = 0;
 
 		// Create VK Instance
-		VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
 		VK_ASSERT(vkCreateInstance(&createInfo, nullptr, &instance), "Failed to create instance");
 
-		// Check for supported VK Extensions
+		// Show available and supported extensions
+		displayExtensionsInfo();
+	}
 
+	void displayExtensionsInfo()
+	{
+		// Get GLFW required extensions from Vulkan to handle the native window
+		uint32_t glfwExtensionCount = 0;
+		const char** glfwExtensions;
+		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+		// Check for supported VK Extensions
 		uint32_t extensionCount = 0;
-		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+		VK_ASSERT(vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr), "Failed to get supported extensions count");
 
 		std::vector<VkExtensionProperties> extensions(extensionCount);
-		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
+		VK_ASSERT(vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data()), "Failed to get supported extensions properties");
 
-		// Show available and supported extensions
+		// Log required GLFW Extensions
+		std::cout << "GLFW Vulkan extensions:\n";
+		for (uint32_t i = 0; i < glfwExtensionCount; ++i)
+		{
+			uint8_t isSupported = 0;
 
-		std::cout << "available extensions:\n";
+			// Check GLFW Extension is supported
+			for (const auto & extension : extensions)
+			{
+				if (std::strcmp(extension.extensionName, glfwExtensions[i]) == 0)
+				{
+					isSupported = 1;
+					break;
+				}
+			}
 
-		for (const auto& extension : extensions) {
-			std::cout << '\t' << extension.extensionName << '\n';
+			std::cout << '\t'  << "- " << glfwExtensions[i] << " | " << (isSupported ? "SUPPORTED" : "NOT SUPPORTED") << '\n';
+		}
+
+		// Log Device's available extensions
+		std::cout << "\nAvailable extensions:\n";
+		for (const auto& extension: extensions)
+		{
+			std::cout << '\t' << "- " << extension.extensionName << '\n';
 		}
 	}
 };
@@ -132,29 +163,4 @@ int main()
 	}
 
 	return EXIT_SUCCESS;
-
-	glfwInit();
-
-	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-	GLFWwindow* window = glfwCreateWindow(800, 600, "Vulkan window", nullptr, nullptr);
-
-	uint32_t extensionCount = 0;
-	vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-
-	std::cout << extensionCount << " extensions supported\n";
-
-	glm::mat4 matrix;
-	glm::vec4 vec;
-	auto test = matrix * vec;
-
-	while (!glfwWindowShouldClose(window))
-	{
-		glfwPollEvents();
-	}
-
-	glfwDestroyWindow(window);
-
-	glfwTerminate();
-
-	return 0;
 }
