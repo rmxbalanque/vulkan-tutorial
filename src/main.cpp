@@ -9,6 +9,9 @@
 #include <glm/mat4x4.hpp>
 
 #include <iostream>
+#include <vector>
+
+#define VK_ASSERT(conditional, err_msg) if (conditional != VK_SUCCESS) { throw std::runtime_error(err_msg); }
 
 class HelloTriangleApplication
 {
@@ -22,6 +25,9 @@ public:
 	}
 
 private:
+
+	// ------------------------------------------------------------------------
+	// GLFW API
 
 	GLFWwindow* window = nullptr;
 	const uint32_t wWidth = 1080;
@@ -37,10 +43,8 @@ private:
 		window = glfwCreateWindow(wWidth, wHeight, "Vulkan", nullptr, nullptr);
 	}
 
-	void initVulkan()
-	{
-
-	}
+	// ------------------------------------------------------------------------
+	// Application API
 
 	void mainLoop()
 	{
@@ -51,8 +55,65 @@ private:
 
 	void cleanup()
 	{
-		glfwDestroyWindow(window);	// Destroy native window
-		glfwTerminate();			// Deinit GLFW library
+		vkDestroyInstance(instance, nullptr);	// Destroy VK Instance
+		glfwDestroyWindow(window);						// Destroy native window
+		glfwTerminate();								// Deinit GLFW library
+	}
+
+	// ------------------------------------------------------------------------
+	// Vulkan API
+
+	// Connection between application and the VK Library.
+	VkInstance instance;
+
+	void initVulkan()
+	{
+		createInstance();
+	}
+
+	void createInstance()
+	{
+		// Setup application info
+		VkApplicationInfo appInfo;
+		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+		appInfo.pApplicationName = "Hello Triangle";
+		appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+		appInfo.pEngineName = "No Engine";
+		appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+		appInfo.apiVersion = VK_API_VERSION_1_0;
+
+		// Get GLFW required extensions from Vulkan to handle the native window
+		uint32_t glfwExtensionCount = 0;
+		const char** glfwExtensions;
+		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+		// Setup creation info
+		VkInstanceCreateInfo createInfo;
+		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+		createInfo.pApplicationInfo = &appInfo;
+		createInfo.enabledExtensionCount = glfwExtensionCount;
+		createInfo.ppEnabledExtensionNames = glfwExtensions;
+		createInfo.enabledLayerCount = 0;
+
+		// Create VK Instance
+		VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
+		VK_ASSERT(vkCreateInstance(&createInfo, nullptr, &instance), "Failed to create instance");
+
+		// Check for supported VK Extensions
+
+		uint32_t extensionCount = 0;
+		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+
+		std::vector<VkExtensionProperties> extensions(extensionCount);
+		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
+
+		// Show available and supported extensions
+
+		std::cout << "available extensions:\n";
+
+		for (const auto& extension : extensions) {
+			std::cout << '\t' << extension.extensionName << '\n';
+		}
 	}
 };
 
