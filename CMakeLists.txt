@@ -9,6 +9,8 @@ set(SOURCE_FILES
 
 add_executable(vulkan-tutorial ${SOURCE_FILES})
 
+target_compile_definitions(vulkan-tutorial PRIVATE VK_PRJ_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 # Link with Vulkan.
 find_package(Vulkan REQUIRED)
 target_include_directories(${PROJECT_NAME} PUBLIC ${Vulkan_INCLUDE_DIRS})

@@ -15,6 +15,7 @@
 #include <set>
 #include <cstdint> 		// Necessary for UINT32_MAX
 #include <algorithm> 	// Necessary for std::min/std::max
+#include <fstream>
 
 #define ASSERT(conditional, err_msg) if (!conditional) { throw std::runtime_error(err_msg); }
 #define VK_ASSERT(conditional, err_msg) if (conditional != VK_SUCCESS) { throw std::runtime_error(err_msg); }
@@ -142,6 +143,28 @@ private:
 		glfwTerminate();                        // De-init GLFW library
 	}
 
+	static std::vector<char> readFile(const std::string & filename)
+	{
+		// Open and start reading from the end
+		std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+		// Validate
+		ASSERT(file.is_open(), "Failed to pen file!");
+
+		// Allocate file buffer
+		size_t fileSize = (size_t) file.tellg();
+		std::vector<char> buffer(fileSize);
+
+		// Read file into buffer
+		file.seekg(0);
+		file.read(buffer.data(), fileSize);
+
+		// Close file
+		file.close();
+
+		return buffer;
+	}
+
 	// ------------------------------------------------------------------------
 	// Vulkan API
 
@@ -180,6 +203,54 @@ private:
 		createLogicalDevice();
 		createSwapChain();
 		createImageViews();
+		createGraphicsPipeline();
+	}
+
+	void createGraphicsPipeline()
+	{
+		// Load shader bytecode
+		auto vertShaderCode = readFile(VK_PRJ_SOURCE_DIR"/assets/shaders/vert.spv");
+		auto fragShaderCode = readFile(VK_PRJ_SOURCE_DIR"/assets/shaders/frag.spv");
+
+		// Create shader modules
+		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+		// Vertex shader stage setup
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo {};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;								// Shader stage 
+		vertShaderStageInfo.module = vertShaderModule;										// Shader module contained the code
+		vertShaderStageInfo.pName = "main";													// Shader entrypoint
+		vertShaderStageInfo.pSpecializationInfo = nullptr;									// No constants
+
+		// Fragment shader stage setup
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo {};
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;							// Shader stage
+		fragShaderStageInfo.module = fragShaderModule;										// Shader module contained the code
+		fragShaderStageInfo.pName = "main";													// Shader entrypoint
+		fragShaderStageInfo.pSpecializationInfo = nullptr;									// No constants
+
+		// Shader stages for graphics pipeline (Programmable Pipeline Stages)
+		VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+		// Clean up shader modules since Graphics Pipeline has been created.
+		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+		vkDestroyShaderModule(device, vertShaderModule, nullptr);
+	}
+
+	VkShaderModule createShaderModule(const std::vector<char>& code)
+	{
+		VkShaderModuleCreateInfo createInfo {};
+		createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+		createInfo.codeSize = code.size();
+		createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+		VkShaderModule shaderModule;
+		VK_ASSERT(vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule), "Failed to create shader module!")
+
+		return shaderModule;
 	}
 
 	void createImageViews()
