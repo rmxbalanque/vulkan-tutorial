@@ -11,9 +11,56 @@
 
 #include <iostream>
 #include <vector>
+#include <optional>
 
 #define ASSERT(conditional, err_msg) if (!conditional) { throw std::runtime_error(err_msg); }
 #define VK_ASSERT(conditional, err_msg) if (conditional != VK_SUCCESS) { throw std::runtime_error(err_msg); }
+
+// ----------------------------------------------------------------------------
+//  Structs
+// ----------------------------------------------------------------------------
+
+struct QueueFamilyIndices
+{
+	std::optional<uint32_t> graphicsFamily;
+
+	bool isComplete()
+	{
+		return graphicsFamily.has_value();
+	}
+};
+
+
+// ----------------------------------------------------------------------------
+// Public Functions
+// ----------------------------------------------------------------------------
+
+QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device)
+{
+	QueueFamilyIndices indices;
+
+	// Get queue family count
+	uint32_t queueFamilyCount = 0;
+	vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+	// Get list of queue families
+	std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+	vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+	// We need to find at least one queue family that support VK_QUEUE_GRAPHICS_BIT
+	for (uint32_t i = 0; i < queueFamilyCount; ++i)
+	{
+		if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+		{
+			indices.graphicsFamily = i;
+		}
+
+		if (indices.isComplete())
+			break;
+	}
+
+	return indices;
+}
 
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger)
 {
@@ -42,6 +89,10 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 		func(instance, debugMessenger, pAllocator);
 	}
 }
+
+// ----------------------------------------------------------------------------
+//  Application
+// ----------------------------------------------------------------------------
 
 class HelloTriangleApplication
 {
@@ -102,8 +153,9 @@ private:
 	// ------------------------------------------------------------------------
 	// Vulkan API
 
-	VkInstance instance;						// Connection between application and the VK Library.
-	VkDebugUtilsMessengerEXT debugMessenger;	// Debug Callback Messenger Handle
+	VkInstance instance;								// Connection between application and the VK Library.
+	VkDebugUtilsMessengerEXT debugMessenger;			// Debug Callback Messenger Handle
+	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;	// Physical Device (Graphics card) handle that we will be using
 
 	// Validation layers are optional components that hook into Vulkan function calls to apply additional operations (Debugging).
 	const std::vector<const char*> validationLayers = { "VK_LAYER_KHRONOS_validation" };
@@ -119,6 +171,46 @@ private:
 	{
 		createInstance();
 		setupDebugMessenger();
+		pickPhysicalDevice();
+	}
+
+	void pickPhysicalDevice()
+	{
+		// Get GPU count
+		uint32_t deviceCount = 0;
+		vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+
+		ASSERT(deviceCount > 0, "Failed to find GPUs that support Vulkan!")
+
+		// Get physical devices (GPUs)
+		std::vector<VkPhysicalDevice> devices(deviceCount);
+		vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+
+		// Check if physical devices meet the requirements we have
+		for (const auto& device: devices)
+		{
+			if (isDeviceSuitable(device))
+			{
+				physicalDevice = device;
+				break;
+			}
+		}
+	}
+
+	bool isDeviceSuitable(VkPhysicalDevice device)
+	{
+//		// Query physical device its info
+//		VkPhysicalDeviceProperties deviceProperties;
+//		vkGetPhysicalDeviceProperties(device, &deviceProperties);
+//
+//		// Query physical device for optional features
+//		VkPhysicalDeviceFeatures deviceFeatures;
+//		vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+		// Physical device has to have atleast a graphics queue family to be supported
+		QueueFamilyIndices indices = FindQueueFamilies(device);
+
+		return indices.isComplete();
 	}
 
 	void createInstance()
