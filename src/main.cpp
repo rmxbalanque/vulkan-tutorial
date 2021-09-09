@@ -128,6 +128,12 @@ private:
 			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
 		}
 
+		// Destroy frame buffers (Before image views and render pass they are based on)
+		for (auto framebuffer : swapChainFramebuffers)
+		{
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		}
+
 		// Destroy swap chain image views
 		for (auto imageView : swapChainImageViews)
 		{
@@ -186,6 +192,7 @@ private:
 	VkPipelineLayout pipelineLayout;					// Specified uniform values
 	VkRenderPass renderPass;							// Render Pass in Graphics Pipeline
 	VkPipeline graphicsPipeline;						// Graphics Pipeline
+	std::vector<VkFramebuffer> swapChainFramebuffers;	// Swap Chain Frame-buffers for the images for presentation
 
 	// Logical device required extensions
 	const std::vector<const char *> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -211,6 +218,33 @@ private:
 		createImageViews();
 		createRenderPass();
 		createGraphicsPipeline();
+		createFramebuffers();
+	}
+
+	void createFramebuffers()
+	{
+		// One framebuffer per swap chain image views
+		swapChainFramebuffers.resize(swapChainImageViews.size());
+
+		// Create framebuffers
+		for (size_t i = 0; i < swapChainImageViews.size(); ++i)
+		{
+			// Swap chain that will be matched to the framebuffer
+			VkImageView attachments[] = { swapChainImageViews[i] };
+
+			// Setup creation info
+			VkFramebufferCreateInfo framebufferInfo {};
+			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			framebufferInfo.renderPass = renderPass;
+			framebufferInfo.attachmentCount = 1;
+			framebufferInfo.pAttachments = attachments;
+			framebufferInfo.width = swapChainExtent.width;
+			framebufferInfo.height = swapChainExtent.height;
+			framebufferInfo.layers = 1;
+
+			// Create framebuffer for swap chain image view
+			VK_ASSERT(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]), "Failed to crate framebuffer!")
+		}
 	}
 
 	void createGraphicsPipeline()
