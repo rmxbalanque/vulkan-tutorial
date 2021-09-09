@@ -134,6 +134,7 @@ private:
 			vkDestroyImageView(device, imageView, nullptr);
 		}
 
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);		// Destroy graphics pipeline
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);	// Destroy uniforms
 		vkDestroyRenderPass(device, renderPass, nullptr);			// Destroy render pass
 		vkDestroySwapchainKHR(device, swapChain, nullptr);			// Destroy window swapchain
@@ -184,6 +185,7 @@ private:
 	std::vector<VkImageView> swapChainImageViews;		// Swap chain image views
 	VkPipelineLayout pipelineLayout;					// Specified uniform values
 	VkRenderPass renderPass;							// Render Pass in Graphics Pipeline
+	VkPipeline graphicsPipeline;						// Graphics Pipeline
 
 	// Logical device required extensions
 	const std::vector<const char *> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -346,12 +348,44 @@ private:
 		pipelineLayoutInfo.pushConstantRangeCount = 0; 		// Optional
 		pipelineLayoutInfo.pPushConstantRanges = nullptr; 	// Optional
 
+		// Create uniforms layout
 		VK_ASSERT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "Failed to create pipeline layout!");
+
+		// Setup graphics pipeline info struct
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		{
+			pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+
+			// Shader stages
+			pipelineInfo.stageCount = 2;
+			pipelineInfo.pStages = shaderStages;
+
+			// Fixed pipeline
+			pipelineInfo.pVertexInputState = &vertexInputInfo;
+			pipelineInfo.pInputAssemblyState = &inputAssembly;
+			pipelineInfo.pViewportState = &viewportState;
+			pipelineInfo.pRasterizationState = &rasterizer;
+			pipelineInfo.pMultisampleState = &multisampling;
+			pipelineInfo.pDepthStencilState = nullptr;            // Optional
+			pipelineInfo.pColorBlendState = &colorBlending;
+			pipelineInfo.pDynamicState = &dynamicState;        // Optional
+
+			// Uniforms
+			pipelineInfo.layout = pipelineLayout;
+
+			// Render-pass
+			pipelineInfo.renderPass = renderPass;
+			pipelineInfo.subpass = 0;                // Note: Index
+
+			pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;    // Optional
+			pipelineInfo.basePipelineIndex = -1;                // Optional
+		}
+
+		VK_ASSERT(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline), "Failed to create graphics pipeline!")
 
 		// Clean up shader modules since Graphics Pipeline has been created.
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
 		vkDestroyShaderModule(device, vertShaderModule, nullptr);
-
 	}
 
 	void createRenderPass()
@@ -457,37 +491,39 @@ private:
 
 		// Swap chain creation info setup
 		VkSwapchainCreateInfoKHR createInfo {};
-		createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-		createInfo.surface = surface;
-		createInfo.minImageCount = imageCount;
-		createInfo.imageFormat = surfaceFormat.format;
-		createInfo.imageColorSpace = surfaceFormat.colorSpace;
-		createInfo.imageExtent = extent;
-		createInfo.imageArrayLayers = 1;								// Note: Always one unless developing a stereoscopic 3D application
-		createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-		// Setup how to handle swap chain images that will be used across multiple queue families.
-		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-		uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
-
-		if (indices.graphicsFamily != indices.presentFamily)
 		{
-			createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-			createInfo.queueFamilyIndexCount = 2;
-			createInfo.pQueueFamilyIndices = queueFamilyIndices;
-		}
-		else
-		{
-			createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-			createInfo.queueFamilyIndexCount = 0; 		// Optional
-			createInfo.pQueueFamilyIndices = nullptr; 	// Optional
-		}
+			createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+			createInfo.surface = surface;
+			createInfo.minImageCount = imageCount;
+			createInfo.imageFormat = surfaceFormat.format;
+			createInfo.imageColorSpace = surfaceFormat.colorSpace;
+			createInfo.imageExtent = extent;
+			createInfo.imageArrayLayers = 1;                                // Note: Always one unless developing a stereoscopic 3D application
+			createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-		createInfo.preTransform = swapChainSupport.capabilities.currentTransform;	// No transformation performed
-		createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-		createInfo.presentMode = presentMode;
-		createInfo.clipped = VK_TRUE;
-		createInfo.oldSwapchain = VK_NULL_HANDLE;
+			// Setup how to handle swap chain images that will be used across multiple queue families.
+			QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+			uint32_t queueFamilyIndices[] = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+
+			if (indices.graphicsFamily != indices.presentFamily)
+			{
+				createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+				createInfo.queueFamilyIndexCount = 2;
+				createInfo.pQueueFamilyIndices = queueFamilyIndices;
+			}
+			else
+			{
+				createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+				createInfo.queueFamilyIndexCount = 0;        // Optional
+				createInfo.pQueueFamilyIndices = nullptr;    // Optional
+			}
+
+			createInfo.preTransform = swapChainSupport.capabilities.currentTransform;    // No transformation performed
+			createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+			createInfo.presentMode = presentMode;
+			createInfo.clipped = VK_TRUE;
+			createInfo.oldSwapchain = VK_NULL_HANDLE;
+		}
 
 		// Create swap chain
 		VK_ASSERT(vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain), "Failed to create swap chain!")
