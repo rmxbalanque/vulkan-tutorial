@@ -140,6 +140,7 @@ private:
 			vkDestroyImageView(device, imageView, nullptr);
 		}
 
+		vkDestroyCommandPool(device, commandPool, nullptr);			// Destroy command pool
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);		// Destroy graphics pipeline
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);	// Destroy uniforms
 		vkDestroyRenderPass(device, renderPass, nullptr);			// Destroy render pass
@@ -193,6 +194,8 @@ private:
 	VkRenderPass renderPass;							// Render Pass in Graphics Pipeline
 	VkPipeline graphicsPipeline;						// Graphics Pipeline
 	std::vector<VkFramebuffer> swapChainFramebuffers;	// Swap Chain Frame-buffers for the images for presentation
+	VkCommandPool commandPool;							// Command pool (Used to create command buffers)
+	std::vector<VkCommandBuffer> commandBuffers;		// Command buffers for the images in the swap chain
 
 	// Logical device required extensions
 	const std::vector<const char *> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -219,6 +222,88 @@ private:
 		createRenderPass();
 		createGraphicsPipeline();
 		createFramebuffers();
+		createCommandPool();
+		createCommandBuffers();
+	}
+
+	void createCommandBuffers()
+	{
+		{
+			// Enough command buffers to cover images in the swap chain
+			commandBuffers.resize(swapChainFramebuffers.size());
+
+			// Setup command buffer creation
+			VkCommandBufferAllocateInfo allocInfo{};
+			allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+			allocInfo.commandPool = commandPool;
+			allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+			allocInfo.commandBufferCount = static_cast<uint32_t>(commandBuffers.size());
+
+			// Create command buffers
+			VK_ASSERT(vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()), "Failed to allocate command buffers!")
+		}
+
+		{
+			for (size_t i = 0; i < commandBuffers.size(); i++)
+			{
+				// Begin recording info struct setup
+				VkCommandBufferBeginInfo beginInfo {};
+				beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+				beginInfo.flags = 0;					// Optional
+				beginInfo.pInheritanceInfo = nullptr;	// Optional
+
+				// Start recording commands
+				VK_ASSERT(vkBeginCommandBuffer(commandBuffers[i], &beginInfo), "Failed to begin recording command buffer!")
+
+				VkRenderPassBeginInfo renderPassInfo{};
+				{
+					renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+
+					// Setup render pass attachments
+					renderPassInfo.renderPass = renderPass;
+					renderPassInfo.framebuffer = swapChainFramebuffers[i];
+
+					// Render area (Pixel outside this range will have undefined values)
+					renderPassInfo.renderArea.offset = { 0, 0 };
+					renderPassInfo.renderArea.extent = swapChainExtent;
+
+					// Record clear values
+					VkClearValue clearColor = {{{ 0.0f, 0.0f, 0.0f, 1.0f }}};
+					renderPassInfo.clearValueCount = 1;
+					renderPassInfo.pClearValues = &clearColor;
+				}
+
+				// Begin render pass
+				// Note: All the functions that record commands have the prefix "vkCmd"
+				vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+				// Bind the graphics pipeline
+				vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+				// Main draw call
+				vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+
+				// Render pass is done
+				vkCmdEndRenderPass(commandBuffers[i]);
+
+				// Done recording commn
+				VK_ASSERT(vkEndCommandBuffer(commandBuffers[i]), "Failed to record command buffers!")
+			}
+		}
+	}
+
+	void createCommandPool()
+	{
+		QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+		// Setup create info for command pool for graphics
+		VkCommandPoolCreateInfo poolInfo {};
+		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+		poolInfo.flags = 0;	// Optional
+
+		// Create command pool
+		VK_ASSERT(vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool), "Failed to create command pool!");
 	}
 
 	void createFramebuffers()
@@ -400,18 +485,18 @@ private:
 			pipelineInfo.pViewportState = &viewportState;
 			pipelineInfo.pRasterizationState = &rasterizer;
 			pipelineInfo.pMultisampleState = &multisampling;
-			pipelineInfo.pDepthStencilState = nullptr;            // Optional
+			pipelineInfo.pDepthStencilState = nullptr;			// Optional
 			pipelineInfo.pColorBlendState = &colorBlending;
-			pipelineInfo.pDynamicState = &dynamicState;        // Optional
+			pipelineInfo.pDynamicState = nullptr;        		// Optional - TODO: Use the dynamic states
 
 			// Uniforms
 			pipelineInfo.layout = pipelineLayout;
 
 			// Render-pass
 			pipelineInfo.renderPass = renderPass;
-			pipelineInfo.subpass = 0;                // Note: Index
+			pipelineInfo.subpass = 0;                			// Note: Index
 
-			pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;    // Optional
+			pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;   // Optional
 			pipelineInfo.basePipelineIndex = -1;                // Optional
 		}
 
