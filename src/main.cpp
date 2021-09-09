@@ -135,6 +135,7 @@ private:
 		}
 
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);	// Destroy uniforms
+		vkDestroyRenderPass(device, renderPass, nullptr);			// Destroy render pass
 		vkDestroySwapchainKHR(device, swapChain, nullptr);			// Destroy window swapchain
 		vkDestroySurfaceKHR(instance, surface, nullptr);			// Destroy window surface
 		vkDestroyDevice(device, nullptr);							// Destroy logical device
@@ -182,6 +183,7 @@ private:
 	VkExtent2D swapChainExtent;							// Swap chain extents (width and height)
 	std::vector<VkImageView> swapChainImageViews;		// Swap chain image views
 	VkPipelineLayout pipelineLayout;					// Specified uniform values
+	VkRenderPass renderPass;							// Render Pass in Graphics Pipeline
 
 	// Logical device required extensions
 	const std::vector<const char *> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -205,6 +207,7 @@ private:
 		createLogicalDevice();
 		createSwapChain();
 		createImageViews();
+		createRenderPass();
 		createGraphicsPipeline();
 	}
 
@@ -239,11 +242,7 @@ private:
 		// Shader stages for graphics pipeline (Programmable Pipeline Stages)
 		VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-		// Clean up shader modules since Graphics Pipeline has been created.
-		vkDestroyShaderModule(device, fragShaderModule, nullptr);
-		vkDestroyShaderModule(device, vertShaderModule, nullptr);
-
-		// FIXED-PIPELINE ()
+		// FIXED-PIPELINE
 
 		// Struct that describes the format of the vertex data that will be passed to the vertex shader
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo {};
@@ -348,6 +347,46 @@ private:
 		pipelineLayoutInfo.pPushConstantRanges = nullptr; 	// Optional
 
 		VK_ASSERT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "Failed to create pipeline layout!");
+
+		// Clean up shader modules since Graphics Pipeline has been created.
+		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+		vkDestroyShaderModule(device, vertShaderModule, nullptr);
+
+	}
+
+	void createRenderPass()
+	{
+		// One single color buffer attachment
+		VkAttachmentDescription colorAttachment {};
+		colorAttachment.format = swapChainImageFormat;						// Color attachment format should match the format of the images in the swap chain
+		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;					// No multisampling (So far)
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;				// What to do with data before rendering
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;				// What to do with data after rendering
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;	// Don't care what happens to data
+		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;	// Don't care what happens to data
+		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;			// Layout the image will have before the render pass begins
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;		// Layout to automatically transition to when the render pass finishes
+
+		// Attachment reference for the sub-pass
+		VkAttachmentReference colorAttachmentRef {};
+		colorAttachmentRef.attachment = 0;
+		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		// One sub-pass in the render pass
+		VkSubpassDescription subpass {};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &colorAttachmentRef;
+
+		// Render pass setup
+		VkRenderPassCreateInfo renderPassInfo {};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &colorAttachment;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
+
+		VK_ASSERT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass), "Failed to create render passes!");
 	}
 
 	VkShaderModule createShaderModule(const std::vector<char>& code)
