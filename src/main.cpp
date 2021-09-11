@@ -103,10 +103,30 @@ private:
 		glfwInit();                                      // Init GLFW lib
 
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);    // We are not using OpenGL
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);      // No window resize (for now)
 
 		// Create window
 		window = glfwCreateWindow(W_WIDTH, W_HEIGHT, "Vulkan", nullptr, nullptr);
+
+		// Set user-data pointer for our window
+		glfwSetWindowUserPointer(window, this);
+
+		// Resize window callback
+		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+	}
+
+	void cleanupWindow()
+	{
+		// Destroy native window
+		glfwDestroyWindow(window);
+
+		// De-init GLFW library
+		glfwTerminate();
+	}
+
+	static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
+	{
+		auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+		app->framebufferResized = true;
 	}
 
 	// ------------------------------------------------------------------------
@@ -127,47 +147,11 @@ private:
 
 	void cleanup()
 	{
-		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
-		{
-			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);	// Destroy semaphores
-			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);   // Destroy semaphores
-			vkDestroyFence(device, inFlightFences[i], nullptr);					// Destroy fences
-		}
+		// Cleanup vulkan instance and child resources
+		cleanupVulkan();
 
-		vkDestroyCommandPool(device, commandPool, nullptr);				// Destroy command pool
-
-		// Destroy frame buffers (Before image views and render pass they are based on)
-		for (auto framebuffer : swapChainFramebuffers)
-		{
-			vkDestroyFramebuffer(device, framebuffer, nullptr);
-		}
-
-		// Destroy VK Debug Messenger
-		if (enableValidationLayers)
-		{
-			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
-		}
-
-		vkDestroyPipeline(device, graphicsPipeline, nullptr);			// Destroy graphics pipeline
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);		// Destroy uniforms
-		vkDestroyRenderPass(device, renderPass, nullptr);				// Destroy render pass
-
-		// Destroy swap chain image views
-		for (auto imageView : swapChainImageViews)
-		{
-			vkDestroyImageView(device, imageView, nullptr);
-		}
-
-		vkDestroySwapchainKHR(device, swapChain, nullptr);				// Destroy window swap-chain
-		vkDestroyDevice(device, nullptr);								// Destroy logical device
-
-
-		vkDestroySurfaceKHR(instance, surface, nullptr);				// Destroy window surface
-		vkDestroyInstance(instance, nullptr);							// Destroy VK Instance
-
-		glfwDestroyWindow(window);										// Destroy native window
-
-		glfwTerminate();                        						// De-init GLFW library
+		// Clean up window and resources
+		cleanupWindow();
 	}
 
 	static std::vector<char> readFile(const std::string & filename)
@@ -220,6 +204,8 @@ private:
 	std::vector<VkFence> inFlightFences;				// Fence for limit max frames (CPU-GPU sync)
 	std::vector<VkFence> imagesInFlight;				// Fence for images in flight (CPU-GPU sync)
 	size_t currentFrame = 0;							// Current frame index (Used to query semaphores)
+	bool framebufferResized = false;					// Flag to determine if window resize has occurred
+	float lineWidth = 1.f;								// Primitives line width
 
 	// Logical device required extensions
 	const std::vector<const char *> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -237,18 +223,59 @@ private:
 	void initVulkan()
 	{
 		createInstance();
+
 		setupDebugMessenger();
+
 		createSurface();		// Note: This is performed right after the instance creation since it can influence our result when choosing a physical device.
+
 		pickPhysicalDevice();
+
 		createLogicalDevice();
+
 		createSwapChain();
+
 		createImageViews();
+
 		createRenderPass();
+
 		createGraphicsPipeline();
+
 		createFramebuffers();
+
 		createCommandPool();
+
 		createCommandBuffers();
+		recordCommandBuffers();
+
 		createSyncObjects();
+	}
+
+	void cleanupVulkan()
+	{
+		cleanupSwapChain();
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+		{
+			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);	// Destroy semaphores
+			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);   // Destroy semaphores
+			vkDestroyFence(device, inFlightFences[i], nullptr);					// Destroy fences
+		}
+
+		vkDestroyCommandPool(device, commandPool, nullptr);				// Destroy command pool
+
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);			// Destroy graphics pipeline
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);		// Destroy uniforms
+
+		vkDestroyDevice(device, nullptr);								// Destroy logical device
+
+		// Destroy VK Debug Messenger
+		if (enableValidationLayers)
+		{
+			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+		}
+
+		vkDestroySurfaceKHR(instance, surface, nullptr);				// Destroy window surface
+		vkDestroyInstance(instance, nullptr);							// Destroy VK Instance
 	}
 
 	// Will perform the following:
@@ -263,7 +290,18 @@ private:
 		// - ACQUIRE AN IMAGE FROM THE SWAP CHAIN
 
 		uint32_t imageIndex;
-		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+		VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+		// Recreate swap chain if out of date (Can't draw out of date swap-chain)
+		if (result == VK_ERROR_OUT_OF_DATE_KHR)
+		{
+			recreateSwapChain();
+			return;
+		}
+		else
+		{
+			ASSERT(result == VK_SUCCESS && result == VK_SUBOPTIMAL_KHR, "Failed to acquire swap chain image!")
+		}
 
 		// Check if a previous frame is using this image (i.e. there is its fence to wait on)
 		if (imagesInFlight[imageIndex] != VK_NULL_HANDLE)
@@ -321,7 +359,18 @@ private:
 		presentInfo.pResults = nullptr;	// Optional
 
 		// Submit the request to present an image to the swap chain
-		vkQueuePresentKHR(presentQueue, &presentInfo);
+		result = vkQueuePresentKHR(presentQueue, &presentInfo);
+
+		// Recreate swap chain if needed
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized)
+		{
+			framebufferResized = false;
+			recreateSwapChain();
+		}
+		else
+		{
+			ASSERT(result == VK_SUCCESS, "Failed to present swap chain image!")
+		}
 
 		// Advance to next frame
 		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -369,54 +418,75 @@ private:
 			// Create command buffers
 			VK_ASSERT(vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()), "Failed to allocate command buffers!")
 		}
+	}
 
+	void recordCommandBuffers()
+	{
+		// Record commands in all the available buffers
+		for (size_t i = 0; i < commandBuffers.size(); i++)
 		{
-			for (size_t i = 0; i < commandBuffers.size(); i++)
+			// Begin recording info struct setup
+			VkCommandBufferBeginInfo beginInfo {};
+			beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+			beginInfo.flags = 0;					// Optional
+			beginInfo.pInheritanceInfo = nullptr;	// Optional
+
+			// Start recording commands
+			VK_ASSERT(vkBeginCommandBuffer(commandBuffers[i], &beginInfo), "Failed to begin recording command buffer!")
+
+			// Setup render pass begin information
+			VkRenderPassBeginInfo renderPassInfo {};
 			{
-				// Begin recording info struct setup
-				VkCommandBufferBeginInfo beginInfo {};
-				beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-				beginInfo.flags = 0;					// Optional
-				beginInfo.pInheritanceInfo = nullptr;	// Optional
+				renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 
-				// Start recording commands
-				VK_ASSERT(vkBeginCommandBuffer(commandBuffers[i], &beginInfo), "Failed to begin recording command buffer!")
+				// Setup render pass attachments
+				renderPassInfo.renderPass = renderPass;
+				renderPassInfo.framebuffer = swapChainFramebuffers[i];
 
-				// Setup render pass begin information
-				VkRenderPassBeginInfo renderPassInfo {};
-				{
-					renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+				// Render area (Pixel outside this range will have undefined values)
+				renderPassInfo.renderArea.offset = { 0, 0 };
+				renderPassInfo.renderArea.extent = swapChainExtent;
 
-					// Setup render pass attachments
-					renderPassInfo.renderPass = renderPass;
-					renderPassInfo.framebuffer = swapChainFramebuffers[i];
-
-					// Render area (Pixel outside this range will have undefined values)
-					renderPassInfo.renderArea.offset = { 0, 0 };
-					renderPassInfo.renderArea.extent = swapChainExtent;
-
-					// Record clear values
-					VkClearValue clearColor = {{{ 0.0f, 0.0f, 0.0f, 1.0f }}};
-					renderPassInfo.clearValueCount = 1;
-					renderPassInfo.pClearValues = &clearColor;
-				}
-
-				// Begin render pass
-				// Note: All the functions that record commands have the prefix "vkCmd"
-				vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-				// Bind the graphics pipeline
-				vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-				// Main draw call
-				vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
-
-				// Render pass is done
-				vkCmdEndRenderPass(commandBuffers[i]);
-
-				// Done recording commn
-				VK_ASSERT(vkEndCommandBuffer(commandBuffers[i]), "Failed to record command buffers!")
+				// Record clear values
+				VkClearValue clearColor = {{{ 0.0f, 0.0f, 0.0f, 1.0f }}};
+				renderPassInfo.clearValueCount = 1;
+				renderPassInfo.pClearValues = &clearColor;
 			}
+
+			// Begin render pass
+			// Note: All the functions that record commands have the prefix "vkCmd"
+			vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+			// Bind the graphics pipeline
+			vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+			// Update frame-buffer viewport
+			VkViewport viewport {};
+			viewport.x = 0.0f;
+			viewport.y = 0.0f;
+			viewport.width = (float) swapChainExtent.width;
+			viewport.height = (float) swapChainExtent.height;
+			viewport.minDepth = 0.0f;
+			viewport.maxDepth = 1.0f;
+			vkCmdSetViewport(commandBuffers[i], 0, 1, &viewport);
+
+			// Update scissor-test
+			VkRect2D scissor{};
+			scissor.offset = {0, 0};
+			scissor.extent = swapChainExtent;
+			vkCmdSetScissor(commandBuffers[i], 0, 1, &scissor);;
+
+			// Update line width
+			vkCmdSetLineWidth(commandBuffers[i], lineWidth);
+
+			// Main draw call
+			vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+
+			// Render pass is done
+			vkCmdEndRenderPass(commandBuffers[i]);
+
+			// Done recording commn
+			VK_ASSERT(vkEndCommandBuffer(commandBuffers[i]), "Failed to record command buffers!")
 		}
 	}
 
@@ -579,12 +649,13 @@ private:
 		// Specify dynamic states of the pipeline
 		VkDynamicState dynamicStates[] = {
 				VK_DYNAMIC_STATE_VIEWPORT,
+				VK_DYNAMIC_STATE_SCISSOR,
 				VK_DYNAMIC_STATE_LINE_WIDTH
 		};
 
 		VkPipelineDynamicStateCreateInfo dynamicState {};
 		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-		dynamicState.dynamicStateCount = 2;
+		dynamicState.dynamicStateCount = 3;
 		dynamicState.pDynamicStates = dynamicStates;
 
 		// Setup uniform values struct
@@ -615,7 +686,7 @@ private:
 			pipelineInfo.pMultisampleState = &multisampling;
 			pipelineInfo.pDepthStencilState = nullptr;			// Optional
 			pipelineInfo.pColorBlendState = &colorBlending;
-			pipelineInfo.pDynamicState = nullptr;        		// Optional - TODO: Use the dynamic states
+			pipelineInfo.pDynamicState = &dynamicState;        	// Optional
 
 			// Uniforms
 			pipelineInfo.layout = pipelineLayout;
@@ -803,6 +874,58 @@ private:
 		swapChainExtent = extent;
 	}
 
+	void recreateSwapChain()
+	{
+		// Pause during window minimization
+		int width = 0, height = 0;
+		glfwGetFramebufferSize(window, &width, &height);
+
+		while (width == 0 || height == 0)
+		{
+			glfwGetFramebufferSize(window, &width, &height);
+			glfwWaitEvents();
+		}
+
+		// Wait for resources in use
+		vkDeviceWaitIdle(device);
+
+		// Clean up old swap chain and dependent resources
+		cleanupSwapChain();
+
+		// Create new swap chain and dependent resources
+		createSwapChain();
+		createImageViews();
+		createRenderPass();
+		createFramebuffers();
+		createCommandBuffers();
+		recordCommandBuffers();
+
+		// Have enought amount of fences for swap chain images
+		imagesInFlight.resize(swapChainImages.size(), VK_NULL_HANDLE);
+	}
+
+	void cleanupSwapChain()
+	{
+		// Destroy frame buffers (Before image views and render pass they are based on)
+		for (auto framebuffer : swapChainFramebuffers)
+		{
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		}
+
+		// Destroy command buffers (No need to destroy command bool)
+		vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+
+		vkDestroyRenderPass(device, renderPass, nullptr);				// Destroy render pass
+
+		// Destroy swap chain image views
+		for (auto imageView : swapChainImageViews)
+		{
+			vkDestroyImageView(device, imageView, nullptr);
+		}
+
+		vkDestroySwapchainKHR(device, swapChain, nullptr);				// Destroy window swap-chain
+	}
+
 	// Surface format is the color depth of our surface.
 	// Note: For the color space we'll use SRGB if it is available, because it results in more accurate perceived colors.
 	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR> & availableFormats)
@@ -886,6 +1009,7 @@ private:
 
 		// Query for the physical device features that we will be using
 		VkPhysicalDeviceFeatures deviceFeatures {};
+		deviceFeatures.wideLines = true;
 
 		// Create logical device
 		VkDeviceCreateInfo createInfo {};
