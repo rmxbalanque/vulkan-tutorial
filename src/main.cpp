@@ -29,7 +29,7 @@ struct QueueFamilyIndices
 	std::optional<uint32_t> graphicsFamily;
 	std::optional<uint32_t> presentFamily;
 
-	bool isComplete()
+	bool isComplete() const
 	{
 		return graphicsFamily.has_value() && presentFamily.has_value();
 	}
@@ -95,8 +95,8 @@ private:
 	// GLFW API
 
 	GLFWwindow* window = nullptr;
-	const uint32_t wWidth = 1080;
-	const uint32_t wHeight = 720;
+	const uint32_t W_WIDTH = 1080;
+	const uint32_t W_HEIGHT = 720;
 
 	void initWindow()
 	{
@@ -106,7 +106,7 @@ private:
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);      // No window resize (for now)
 
 		// Create window
-		window = glfwCreateWindow(wWidth, wHeight, "Vulkan", nullptr, nullptr);
+		window = glfwCreateWindow(W_WIDTH, W_HEIGHT, "Vulkan", nullptr, nullptr);
 	}
 
 	// ------------------------------------------------------------------------
@@ -117,16 +117,24 @@ private:
 		while (!glfwWindowShouldClose(window))
 		{
 			glfwPollEvents();
+			drawFrame();
 		}
+
+		vkDeviceWaitIdle(device);
+		vkQueueWaitIdle(graphicsQueue);
+		vkQueueWaitIdle(presentQueue);
 	}
 
 	void cleanup()
 	{
-		// Destroy VK Debug Messenger
-		if (enableValidationLayers)
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 		{
-			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);	// Destroy semaphores
+			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);   // Destroy semaphores
+			vkDestroyFence(device, inFlightFences[i], nullptr);					// Destroy fences
 		}
+
+		vkDestroyCommandPool(device, commandPool, nullptr);				// Destroy command pool
 
 		// Destroy frame buffers (Before image views and render pass they are based on)
 		for (auto framebuffer : swapChainFramebuffers)
@@ -134,23 +142,32 @@ private:
 			vkDestroyFramebuffer(device, framebuffer, nullptr);
 		}
 
+		// Destroy VK Debug Messenger
+		if (enableValidationLayers)
+		{
+			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+		}
+
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);			// Destroy graphics pipeline
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);		// Destroy uniforms
+		vkDestroyRenderPass(device, renderPass, nullptr);				// Destroy render pass
+
 		// Destroy swap chain image views
 		for (auto imageView : swapChainImageViews)
 		{
 			vkDestroyImageView(device, imageView, nullptr);
 		}
 
-		vkDestroyCommandPool(device, commandPool, nullptr);			// Destroy command pool
-		vkDestroyPipeline(device, graphicsPipeline, nullptr);		// Destroy graphics pipeline
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);	// Destroy uniforms
-		vkDestroyRenderPass(device, renderPass, nullptr);			// Destroy render pass
-		vkDestroySwapchainKHR(device, swapChain, nullptr);			// Destroy window swapchain
-		vkDestroySurfaceKHR(instance, surface, nullptr);			// Destroy window surface
-		vkDestroyDevice(device, nullptr);							// Destroy logical device
-		vkDestroyInstance(instance, nullptr);						// Destroy VK Instance
+		vkDestroySwapchainKHR(device, swapChain, nullptr);				// Destroy window swap-chain
+		vkDestroyDevice(device, nullptr);								// Destroy logical device
 
-		glfwDestroyWindow(window);				// Destroy native window
-		glfwTerminate();                        // De-init GLFW library
+
+		vkDestroySurfaceKHR(instance, surface, nullptr);				// Destroy window surface
+		vkDestroyInstance(instance, nullptr);							// Destroy VK Instance
+
+		glfwDestroyWindow(window);										// Destroy native window
+
+		glfwTerminate();                        						// De-init GLFW library
 	}
 
 	static std::vector<char> readFile(const std::string & filename)
@@ -178,6 +195,8 @@ private:
 	// ------------------------------------------------------------------------
 	// Vulkan API
 
+	const uint32_t MAX_FRAMES_IN_FLIGHT = 2;			// Max frames that can be in flight
+
 	VkInstance instance;								// Connection between application and the VK Library.
 	VkDebugUtilsMessengerEXT debugMessenger;			// Debug Callback Messenger Handle
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;	// Physical Device (Graphics card) handle that we will be using
@@ -196,6 +215,11 @@ private:
 	std::vector<VkFramebuffer> swapChainFramebuffers;	// Swap Chain Frame-buffers for the images for presentation
 	VkCommandPool commandPool;							// Command pool (Used to create command buffers)
 	std::vector<VkCommandBuffer> commandBuffers;		// Command buffers for the images in the swap chain
+	std::vector<VkSemaphore> imageAvailableSemaphores;	// Semaphore for images (GPU to CPU sync)
+	std::vector<VkSemaphore> renderFinishedSemaphores;	// Semaphore for presentation (GPU to CPU sync)
+	std::vector<VkFence> inFlightFences;				// Fence for limit max frames (CPU-GPU sync)
+	std::vector<VkFence> imagesInFlight;				// Fence for images in flight (CPU-GPU sync)
+	size_t currentFrame = 0;							// Current frame index (Used to query semaphores)
 
 	// Logical device required extensions
 	const std::vector<const char *> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -224,6 +248,109 @@ private:
 		createFramebuffers();
 		createCommandPool();
 		createCommandBuffers();
+		createSyncObjects();
+	}
+
+	// Will perform the following:
+	// - Acquire an image from the swap chain
+	// - Execute the command buffer with that image as attachment in the frame buffer
+	// - Return the image to the swap chain for presentation
+	void drawFrame()
+	{
+		// Wait for previous frame to be finished (And not-in-flight)
+		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);	// Wait for all the fences
+
+		// - ACQUIRE AN IMAGE FROM THE SWAP CHAIN
+
+		uint32_t imageIndex;
+		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+		// Check if a previous frame is using this image (i.e. there is its fence to wait on)
+		if (imagesInFlight[imageIndex] != VK_NULL_HANDLE)
+		{
+			vkWaitForFences(device, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+		}
+
+		// Mark the image as now being in use by this frame
+		imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+
+		// - EXECUTE THE COMMAND BUFFER WITH THAT IMAGE AS ATTACHMENT IN THE FRAME BUFFER
+
+		// Setup submission command buffer struct info
+		VkSubmitInfo submitInfo {};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+		// Specify which semaphore to wait on before execution begins and in which pipeline states to wait
+		VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
+		VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+		submitInfo.waitSemaphoreCount = 1;
+		submitInfo.pWaitSemaphores = waitSemaphores;
+		submitInfo.pWaitDstStageMask = waitStages;
+
+		// Command buffers to actually submit for execution
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+
+		// Which semaphores to signal once the commands buffers have finished execution
+		VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
+		submitInfo.signalSemaphoreCount = 1;
+		submitInfo.pSignalSemaphores = signalSemaphores;
+
+		// Reset fences states
+		vkResetFences(device, 1, &inFlightFences[currentFrame]);
+
+		// Submit graphic command buffer queue
+		VK_ASSERT(vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]), "Failed to submit draw command buffer!")
+
+		// - RETURN THE IMAGE TO THE SWAP CHAIN FOR PRESENTATION
+
+		// Setup presentation submission struct
+		VkPresentInfoKHR presentInfo {};
+		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+		// Semaphores to wait on before presentation can happen
+		presentInfo.waitSemaphoreCount = 1;
+		presentInfo.pWaitSemaphores = signalSemaphores;
+
+		// Swap chains to present images to and the index of the image for each swap chain.
+		VkSwapchainKHR swapChains[] = { swapChain };
+		presentInfo.swapchainCount = 1;
+		presentInfo.pSwapchains = swapChains;
+		presentInfo.pImageIndices = &imageIndex;
+
+		presentInfo.pResults = nullptr;	// Optional
+
+		// Submit the request to present an image to the swap chain
+		vkQueuePresentKHR(presentQueue, &presentInfo);
+
+		// Advance to next frame
+		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+	}
+
+	void createSyncObjects()
+	{
+		// Have enough amount of sync objects
+		imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+		renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+		inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+		imagesInFlight.resize(swapChainImages.size(), VK_NULL_HANDLE);
+
+		// Setup semaphore creation info
+		VkSemaphoreCreateInfo semaphoreInfo {};
+		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+		// Setup fence creation info
+		VkFenceCreateInfo fenceInfo {};
+		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+		// Create semaphores
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+		{
+			VK_ASSERT(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]), "Failed to create available images semaphore!");
+			VK_ASSERT(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]), "Failed to create render finished semaphore!");
+			VK_ASSERT(vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]), "Failed to create fences!");
+		}
 	}
 
 	void createCommandBuffers()
@@ -233,7 +360,7 @@ private:
 			commandBuffers.resize(swapChainFramebuffers.size());
 
 			// Setup command buffer creation
-			VkCommandBufferAllocateInfo allocInfo{};
+			VkCommandBufferAllocateInfo allocInfo {};
 			allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 			allocInfo.commandPool = commandPool;
 			allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -255,7 +382,8 @@ private:
 				// Start recording commands
 				VK_ASSERT(vkBeginCommandBuffer(commandBuffers[i], &beginInfo), "Failed to begin recording command buffer!")
 
-				VkRenderPassBeginInfo renderPassInfo{};
+				// Setup render pass begin information
+				VkRenderPassBeginInfo renderPassInfo {};
 				{
 					renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 
@@ -531,6 +659,22 @@ private:
 		subpass.colorAttachmentCount = 1;
 		subpass.pColorAttachments = &colorAttachmentRef;
 
+		// Sub-pass dependency
+		VkSubpassDependency dependency {};
+		{
+			// Specify the indices of the dependency and the dependent subpass
+			dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+			dependency.dstSubpass = 0;
+
+			// Specify the operations to wait on and the stages in which these operations occur
+			dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+			dependency.srcAccessMask = 0;
+
+			// The operations that should wait on this are in the color attachment stage and involve the writing of the color attachment
+			dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+			dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		}
+
 		// Render pass setup
 		VkRenderPassCreateInfo renderPassInfo {};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -538,6 +682,8 @@ private:
 		renderPassInfo.pAttachments = &colorAttachment;
 		renderPassInfo.subpassCount = 1;
 		renderPassInfo.pSubpasses = &subpass;
+		renderPassInfo.dependencyCount = 1;
+		renderPassInfo.pDependencies = &dependency;
 
 		VK_ASSERT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass), "Failed to create render passes!");
 	}
