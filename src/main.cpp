@@ -6,11 +6,14 @@
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 
+#include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 #include <glm/mat4x4.hpp>
 
 #include <iostream>
 #include <vector>
+#include <array>
 #include <optional>
 #include <set>
 #include <cstdint> 		// Necessary for UINT32_MAX
@@ -41,6 +44,43 @@ struct SwapChainSupportDetails
 	std::vector<VkSurfaceFormatKHR> formats;		// Surface formats (pixel format, color space)
 	std::vector<VkPresentModeKHR> presentModes;		// Available presentation modes
 };
+
+struct Vertex
+{
+	glm::vec2 pos;
+	glm::vec3 color;
+
+	static VkVertexInputBindingDescription getBindingDescription()
+	{
+		VkVertexInputBindingDescription bindingDescription {};
+		bindingDescription.binding = 0;									// Index in the array of bindings ( We're only going to use one )
+		bindingDescription.stride = sizeof(Vertex);						// Size of entry
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;		// Move to the next data entry after each vertex ( No-instance rendering )
+
+		return bindingDescription;
+	}
+
+	// Describe how to extract a vertex attribute from a chunk of vertex data originating from a binding descriptor.
+	static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions()
+	{
+		std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions {};
+
+		// Position
+		attributeDescriptions[0].binding = 0;						// Source binding the data is coming from
+		attributeDescriptions[0].location = 0;						// Location directive in vertex shader
+		attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;	// 32 bit Vec2
+		attributeDescriptions[0].offset = offsetof(Vertex, pos);	// Offset of position attribute
+
+		// Color
+		attributeDescriptions[1].binding = 0;							// Source binding the data is coming from
+		attributeDescriptions[1].location = 1;							// Location directive in vertex shader
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;	// 32 bit Vec3
+		attributeDescriptions[1].offset = offsetof(Vertex, color);		// Offset of color attribute
+
+		return attributeDescriptions;
+	}
+};
+
 
 // ----------------------------------------------------------------------------
 // Public Functions
@@ -566,11 +606,17 @@ private:
 
 		// Struct that describes the format of the vertex data that will be passed to the vertex shader
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo {};
-		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertexInputInfo.vertexBindingDescriptionCount = 0;
-		vertexInputInfo.pVertexBindingDescriptions = nullptr; 	// Optional
-		vertexInputInfo.vertexAttributeDescriptionCount = 0;
-		vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+		{
+			auto bindingDescription = Vertex::getBindingDescription();
+			auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+			vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+			vertexInputInfo.vertexBindingDescriptionCount = 1;
+			vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+
+			vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+			vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+		}
 
 		// Struct describes two things: what kind of geometry will be drawn from the vertices and if primitive restart should be enabled.
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly {};
