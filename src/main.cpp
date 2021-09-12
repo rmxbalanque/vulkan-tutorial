@@ -239,6 +239,7 @@ private:
 	VkPipeline graphicsPipeline;						// Graphics Pipeline
 	std::vector<VkFramebuffer> swapChainFramebuffers;	// Swap Chain Frame-buffers for the images for presentation
 	VkCommandPool commandPool;							// Command pool (Used to create command buffers)
+	VkCommandPool transientCommandPool;					// Command pool (Used to create short-lived commands buffers)
 	std::vector<VkCommandBuffer> commandBuffers;		// Command buffers for the images in the swap chain
 	std::vector<VkSemaphore> imageAvailableSemaphores;	// Semaphore for images (GPU to CPU sync)
 	std::vector<VkSemaphore> renderFinishedSemaphores;	// Semaphore for presentation (GPU to CPU sync)
@@ -292,7 +293,7 @@ private:
 
 		createFramebuffers();
 
-		createCommandPool();
+		createCommandPools();
 
 		createVertexBuffer();
 
@@ -317,6 +318,7 @@ private:
 		}
 
 		vkDestroyCommandPool(device, commandPool, nullptr);				// Destroy command pool
+		vkDestroyCommandPool(device, transientCommandPool, nullptr);	// Destroy transient command pool
 
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);			// Destroy graphics pipeline
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);		// Destroy uniforms
@@ -545,46 +547,112 @@ private:
 			// Render pass is done
 			vkCmdEndRenderPass(commandBuffers[i]);
 
-			// Done recording commn
+			// Done recording commands
 			VK_ASSERT(vkEndCommandBuffer(commandBuffers[i]), "Failed to record command buffers!")
 		}
 	}
 
 	void createVertexBuffer()
 	{
-		VkBufferCreateInfo bufferInfo {};
-		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-		bufferInfo.size = sizeof(vertices[0]) * vertices.size();	// Size in bytes
-		bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;		// Vertex buffer
-		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;			// Owned by queue (Graphics queue)
+		// Vertex buffer size
+		VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
-		// Create vertex buffer
-		VK_ASSERT(vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer), "Failed to create vertex buffer!")
-
-		// Query vertex buffer memory requirements
-		VkMemoryRequirements memRequirements;
-		vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
-
-		// Setup memory allocation creation struct
-		VkMemoryAllocateInfo allocInfo {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memRequirements.size;																										// Size of allocation in bytes
-		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);	// Ensure we can write to this memory from the CPU
-
-		// Allocate memory for vertex buffer
-		VK_ASSERT(vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory), "Failed to allocate vertex buffer memory!")
-
-		// Now that our memory was successfully allocated, we can proceed to associate this memory with the vertex buffer
-		vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+		// Create a vertex staging buffer
+		VkBuffer stagingBuffer {};
+		VkDeviceMemory stagingBufferMemory {};
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
 		// Copy vertex data into buffer
 		// Note: This shouldn't be done here. But for the sake of the tutorial well leave it here.
 
 		// Map buffer memory, so we can access a region of it, and then when done using, unmap buffer memory.
 		void* data;
-		vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
-		memcpy(data, vertices.data(), (size_t) bufferInfo.size);
-		vkUnmapMemory(device, vertexBufferMemory);
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, vertices.data(), (size_t) bufferSize);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		// Create vertex buffer
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+
+		// Copy data from staging buffer to vertex buffer
+		copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+		// Clean up staging buffer now that vertex data is in GPU-local buffer
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
+	{
+		// Setup copy command buffer create info
+		VkCommandBufferAllocateInfo allocInfo {};
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandPool = transientCommandPool;
+		allocInfo.commandBufferCount = 1;
+
+		// Allocate temp command buffer
+		VkCommandBuffer commandBuffer;
+		vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+		// Start recording commands
+		VkCommandBufferBeginInfo beginInfo {};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;	// We are only going to use the command buffer once
+
+		vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+		// Copy buffer from staging buffer to GPU-local vertex buffer
+		VkBufferCopy copyRegion{};
+		copyRegion.srcOffset = 0; // Optional
+		copyRegion.dstOffset = 0; // Optional
+		copyRegion.size = size;
+		vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+
+		// Done recording
+		vkEndCommandBuffer(commandBuffer);
+
+		// Submit command queue to GPU and wait for it the transfer to be complete
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffer;
+
+		vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+		vkQueueWaitIdle(graphicsQueue);
+
+		// Clean up temp command buffer
+		vkFreeCommandBuffers(device, transientCommandPool, 1, &commandBuffer);
+	}
+
+	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
+	{
+		VkBufferCreateInfo bufferInfo {};
+		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferInfo.size = size;
+		bufferInfo.usage = usage;
+		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+		// Create buffer
+		VK_ASSERT(vkCreateBuffer(device, &bufferInfo, nullptr, &buffer), "Failed to create buffer!")
+
+		// Query vertex buffer memory requirements
+		VkMemoryRequirements memRequirements;
+		vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+		// Setup memory allocation creation struct
+		VkMemoryAllocateInfo allocInfo {};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;										// Size of allocation in bytes
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);	// Ensure we can write to this memory from the CPU
+
+		// Allocate memory for buffer
+		// Note: Note supposed to call vkAllocateMemory for every individual buffer, and use instead a memory allocator.
+		VK_ASSERT(vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory), "Failed to allocate buffer memory!")
+
+		// Now that our memory was successfully allocated, we can proceed to associate this memory with the buffer
+		vkBindBufferMemory(device, buffer, bufferMemory, 0);
+
 	}
 
 	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
@@ -608,7 +676,7 @@ private:
 		ASSERT(false, "Failed to find suitable memory type!");
 	}
 
-	void createCommandPool()
+	void createCommandPools()
 	{
 		QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
 
@@ -620,6 +688,12 @@ private:
 
 		// Create command pool
 		VK_ASSERT(vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool), "Failed to create command pool!");
+
+		// Setup create info for transient pool for graphics
+		poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+
+		// Create transient command pool
+		VK_ASSERT(vkCreateCommandPool(device, &poolInfo, nullptr, &transientCommandPool), "Failed to create transient command pool");
 	}
 
 	void createFramebuffers()
