@@ -189,6 +189,7 @@ private:
 	VkQueue presentQueue;								// Present queues handle (Logical Device)
 	VkSurfaceKHR surface;								// Windows Surface
 	VkSwapchainKHR swapChain;							// Window Surface Swap chain
+	VkSwapchainKHR oldSwapChain = VK_NULL_HANDLE;		// Retired Window Surface Swap chain
 	std::vector<VkImage> swapChainImages;				// Swap chain images
 	VkFormat swapChainImageFormat;						// Swap chain image format
 	VkExtent2D swapChainExtent;							// Swap chain extents (width and height)
@@ -858,11 +859,18 @@ private:
 			createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 			createInfo.presentMode = presentMode;
 			createInfo.clipped = VK_TRUE;
-			createInfo.oldSwapchain = VK_NULL_HANDLE;
+			createInfo.oldSwapchain = oldSwapChain;
 		}
 
 		// Create swap chain
 		VK_ASSERT(vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain), "Failed to create swap chain!")
+
+		// Destroy old swap chain
+		if (oldSwapChain != VK_NULL_HANDLE)
+		{
+			vkDestroySwapchainKHR(device, oldSwapChain, nullptr);
+			oldSwapChain = VK_NULL_HANDLE;
+		}
 
 		// Get available images in the swap chain (Since we only specify a minimum, the implementation is more than welcome to create more than enough)
 		vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
@@ -872,6 +880,7 @@ private:
 		// Store other relevant swap chain information
 		swapChainImageFormat = surfaceFormat.format;
 		swapChainExtent = extent;
+		oldSwapChain = swapChain;
 	}
 
 	void recreateSwapChain()
@@ -889,11 +898,11 @@ private:
 		// Wait for resources in use
 		vkDeviceWaitIdle(device);
 
-		// Clean up old swap chain and dependent resources
-		cleanupSwapChain();
-
-		// Create new swap chain and dependent resources
+		// Create swap chain based on old swap chain and clean up old swap chain dependent resources
 		createSwapChain();
+		cleanupSwapChainDependentResources();
+
+		// Create new swap chain dependent resources
 		createImageViews();
 		createRenderPass();
 		createFramebuffers();
@@ -904,7 +913,7 @@ private:
 		imagesInFlight.resize(swapChainImages.size(), VK_NULL_HANDLE);
 	}
 
-	void cleanupSwapChain()
+	void cleanupSwapChainDependentResources()
 	{
 		// Destroy frame buffers (Before image views and render pass they are based on)
 		for (auto framebuffer : swapChainFramebuffers)
@@ -922,8 +931,15 @@ private:
 		{
 			vkDestroyImageView(device, imageView, nullptr);
 		}
+	}
 
-		vkDestroySwapchainKHR(device, swapChain, nullptr);				// Destroy window swap-chain
+	void cleanupSwapChain()
+	{
+		// Clean up resources
+		cleanupSwapChainDependentResources();
+
+		// Destroy current window swap-chain
+		vkDestroySwapchainKHR(device, swapChain, nullptr);
 	}
 
 	// Surface format is the color depth of our surface.
