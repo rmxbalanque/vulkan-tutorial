@@ -249,7 +249,9 @@ private:
 	bool framebufferResized = false;					// Flag to determine if window resize has occurred
 	float lineWidth = 1.f;								// Primitives line width
 	VkBuffer vertexBuffer;								// Application vertex buffer
-	VkDeviceMemory vertexBufferMemory;					//
+	VkDeviceMemory vertexBufferMemory;					// Memory buffer for vertex buffer
+	VkBuffer indexBuffer;								// Application index buffer
+	VkDeviceMemory indexBufferMemory;					// Memory buffer for index buffer
 
 	// Logical device required extensions
 	const std::vector<const char *> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -259,9 +261,14 @@ private:
 
 	// Temporal vertex input for application
 	const std::vector<Vertex> vertices = {
-			{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-			{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-			{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+			{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+			{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+			{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+			{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+	};
+
+	const std::vector<uint16_t> indices = {
+			0, 1, 2, 2, 3, 0
 	};
 
 	// Toggle validation layers
@@ -296,6 +303,7 @@ private:
 		createCommandPools();
 
 		createVertexBuffer();
+		createIndexBuffer();
 
 		createCommandBuffers();
 		recordCommandBuffers();
@@ -307,6 +315,11 @@ private:
 	{
 		cleanupSwapChain();
 
+		// Clean up index buffer and its memory buffer
+		vkDestroyBuffer(device, indexBuffer, nullptr);
+		vkFreeMemory(device, indexBufferMemory, nullptr);
+
+		// Clean up vertex buffer and its memory buffer
 		vkDestroyBuffer(device, vertexBuffer, nullptr);
 		vkFreeMemory(device, vertexBufferMemory, nullptr);
 
@@ -541,8 +554,11 @@ private:
 			VkDeviceSize offsets[] = { 0 };
 			vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
+			// Bind index data to be used by graphics pipeline
+			vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
 			// Main draw call
-			vkCmdDraw(commandBuffers[i], vertices.size(), 1, 0, 0);
+			vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
 			// Render pass is done
 			vkCmdEndRenderPass(commandBuffers[i]);
@@ -550,6 +566,36 @@ private:
 			// Done recording commands
 			VK_ASSERT(vkEndCommandBuffer(commandBuffers[i]), "Failed to record command buffers!")
 		}
+	}
+
+	void createIndexBuffer()
+	{
+		// Index buffer size
+		VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+		// Create index staging buffer
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		// Copy index data into buffer
+		// Note: This shouldn't be done here. But for the sake of the tutorial well leave it here.
+
+		// Map buffer memory, so we can access a region of it, and then when done using, unmap buffer memory.
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, indices.data(), (size_t) bufferSize);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		// Create index buffer
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+		// Copy data from staging buffer to index buffer
+		copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+		// Clean up staging buffer now that index data is in GPU-local buffer
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
 	void createVertexBuffer()
