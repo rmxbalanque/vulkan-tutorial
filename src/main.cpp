@@ -247,12 +247,21 @@ private:
 	size_t currentFrame = 0;							// Current frame index (Used to query semaphores)
 	bool framebufferResized = false;					// Flag to determine if window resize has occurred
 	float lineWidth = 1.f;								// Primitives line width
+	VkBuffer vertexBuffer;								// Application vertex buffer
+	VkDeviceMemory vertexBufferMemory;					//
 
 	// Logical device required extensions
 	const std::vector<const char *> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
 	// Validation layers are optional components that hook into Vulkan function calls to apply additional operations (Debugging).
 	const std::vector<const char*> validationLayers = { "VK_LAYER_KHRONOS_validation" };
+
+	// Temporal vertex input for application
+	const std::vector<Vertex> vertices = {
+			{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+			{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+			{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+	};
 
 	// Toggle validation layers
 	#ifdef NDEBUG
@@ -285,6 +294,8 @@ private:
 
 		createCommandPool();
 
+		createVertexBuffer();
+
 		createCommandBuffers();
 		recordCommandBuffers();
 
@@ -294,6 +305,9 @@ private:
 	void cleanupVulkan()
 	{
 		cleanupSwapChain();
+
+		vkDestroyBuffer(device, vertexBuffer, nullptr);
+		vkFreeMemory(device, vertexBufferMemory, nullptr);
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 		{
@@ -520,8 +534,13 @@ private:
 			// Update line width
 			vkCmdSetLineWidth(commandBuffers[i], lineWidth);
 
+			// Bind vertex data to be used by graphics pipeline
+			VkBuffer vertexBuffers[] = { vertexBuffer };
+			VkDeviceSize offsets[] = { 0 };
+			vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+
 			// Main draw call
-			vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+			vkCmdDraw(commandBuffers[i], vertices.size(), 1, 0, 0);
 
 			// Render pass is done
 			vkCmdEndRenderPass(commandBuffers[i]);
@@ -529,6 +548,64 @@ private:
 			// Done recording commn
 			VK_ASSERT(vkEndCommandBuffer(commandBuffers[i]), "Failed to record command buffers!")
 		}
+	}
+
+	void createVertexBuffer()
+	{
+		VkBufferCreateInfo bufferInfo {};
+		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferInfo.size = sizeof(vertices[0]) * vertices.size();	// Size in bytes
+		bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;		// Vertex buffer
+		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;			// Owned by queue (Graphics queue)
+
+		// Create vertex buffer
+		VK_ASSERT(vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer), "Failed to create vertex buffer!")
+
+		// Query vertex buffer memory requirements
+		VkMemoryRequirements memRequirements;
+		vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
+
+		// Setup memory allocation creation struct
+		VkMemoryAllocateInfo allocInfo {};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;																										// Size of allocation in bytes
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);	// Ensure we can write to this memory from the CPU
+
+		// Allocate memory for vertex buffer
+		VK_ASSERT(vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory), "Failed to allocate vertex buffer memory!")
+
+		// Now that our memory was successfully allocated, we can proceed to associate this memory with the vertex buffer
+		vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+
+		// Copy vertex data into buffer
+		// Note: This shouldn't be done here. But for the sake of the tutorial well leave it here.
+
+		// Map buffer memory, so we can access a region of it, and then when done using, unmap buffer memory.
+		void* data;
+		vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+		memcpy(data, vertices.data(), (size_t) bufferInfo.size);
+		vkUnmapMemory(device, vertexBufferMemory);
+	}
+
+	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+	{
+		// The VkPhysicalDeviceMemoryProperties structure has two arrays memoryTypes and memoryHeaps.
+		// Memory heaps are distinct memory resources like dedicated VRAM and swap space in RAM for when VRAM runs out.
+		// The different types of memory exist within these heaps.
+		VkPhysicalDeviceMemoryProperties memProperties;
+		vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+		// FInd memory type that is suitable for the buffer itself
+		for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+		{
+			// We need to combine the requirements of the buffer and our own application requirements to find the right type of memory to use
+			if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+			{
+				return i;
+			}
+		}
+
+		ASSERT(false, "Failed to find suitable memory type!");
 	}
 
 	void createCommandPool()
